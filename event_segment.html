@@ -1,0 +1,827 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Event Segment Annotator (Unified Workflow)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <!-- Vimeo Player API -->
+    <script src="https://player.vimeo.com/api/player.js"></script>
+    
+    <style>
+        body { font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #121212; color: #e5e5e5; }
+        .segment-row:nth-child(even) { background-color: #1f1f1f; }
+        .segment-row:hover { background-color: #2d2d2d; }
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #121212; }
+        ::-webkit-scrollbar-thumb { background: #444; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #666; }
+        
+        .timer-good { color: #4ade80; }
+        .timer-warn { color: #facc15; }
+        .timer-bad { color: #f87171; }
+        
+        option.missing-source { color: #888; font-style: italic; }
+        option.manual-option { font-weight: bold; color: #6366f1; }
+        
+        /* Modal Table Styling */
+        .guide-table th { text-align: left; padding: 8px; border-bottom: 1px solid #444; color: #a5b4fc; font-size: 0.75rem; text-transform: uppercase; }
+        .guide-table td { padding: 8px; border-bottom: 1px solid #333; font-family: monospace; font-size: 0.8rem; color: #ccc; }
+
+        /* Vimeo Container Reset - Force Fit */
+        #vimeoPlayer, #vimeoPlayer iframe { width: 100% !important; height: 100% !important; border: none; }
+    </style>
+</head>
+<body class="h-screen flex flex-col overflow-hidden">
+
+    <!-- Header -->
+    <header class="bg-black p-3 border-b border-gray-800 flex justify-between items-center shrink-0">
+        <div class="flex items-center gap-3">
+            <div class="bg-indigo-600 p-1.5 rounded text-white"><i class="fas fa-film"></i></div>
+            <h1 class="text-lg font-bold tracking-wide">Event Segment Annotator</h1>
+        </div>
+        <div class="flex gap-4 text-sm text-gray-400 items-center">
+            
+            <!-- Template Guide Button -->
+            <button onclick="toggleTemplateModal()" class="bg-gray-800 hover:bg-gray-700 text-indigo-300 px-3 py-1 rounded border border-gray-700 transition-colors flex items-center gap-2 font-semibold text-xs">
+                <i class="fas fa-table"></i> Templates & Guide
+            </button>
+
+            <!-- Criteria Button -->
+            <button onclick="toggleCriteria()" class="bg-gray-800 hover:bg-gray-700 text-indigo-400 px-3 py-1 rounded border border-gray-700 transition-colors flex items-center gap-2 font-semibold text-xs">
+                <i class="fas fa-book-open"></i> Criteria
+            </button>
+            
+            <span class="border-l border-gray-700 pl-4">Target: <span class="text-emerald-400 font-bold">30s - 50s</span></span>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="flex-1 flex overflow-hidden">
+        
+        <!-- Left Column: Player Area -->
+        <div class="flex-1 flex flex-col p-4 gap-4 overflow-y-auto relative min-w-0">
+            
+            <!-- Config / Source Manager -->
+            <div class="bg-gray-800 p-4 rounded-lg shadow-lg flex flex-col gap-3">
+                <!-- 1. Import Config -->
+                <div class="flex gap-4 items-center border-b border-gray-700 pb-3">
+                    <div class="flex-1">
+                        <label class="block text-xs text-gray-400 mb-1 uppercase tracking-wider">1. Import Config (Excel/CSV)</label>
+                        <input type="file" id="configInput" accept=".json, .csv, .xlsx, .xls" class="block w-full text-sm text-gray-400 file:mr-4 file:py-1 file:px-3 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-indigo-600 file:text-white hover:file:bg-indigo-500 cursor-pointer"/>
+                    </div>
+                    <div class="text-right"><div id="configStatus" class="text-xs text-gray-500 italic">No Config Loaded</div></div>
+                </div>
+
+                <!-- 2. Select Movie -->
+                <div class="flex gap-3 items-end">
+                    <div class="flex-1">
+                        <label class="block text-xs text-gray-400 mb-1 uppercase tracking-wider">2. Select Movie</label>
+                        <select id="movieSelect" class="w-full bg-gray-700 text-white p-2 rounded border border-gray-600 focus:border-indigo-500 outline-none text-sm font-mono">
+                            <option value="" disabled selected>-- Select or Add New --</option>
+                            <option value="manual" class="manual-option">➕ Quick Start / Add New</option>
+                        </select>
+                    </div>
+                    <div class="flex-1">
+                         <label class="block text-xs text-gray-400 mb-1 uppercase tracking-wider">Movie Name (Editable)</label>
+                         <input type="text" id="currentMovieName" class="w-full bg-gray-900 text-gray-300 p-2 rounded border border-gray-700 text-sm focus:border-indigo-500 focus:bg-gray-800 transition-colors" placeholder="Movie Name">
+                    </div>
+                </div>
+
+                <!-- Limits Display (Important) -->
+                <div id="limitsBar" class="hidden bg-black/40 px-3 py-2 rounded border border-gray-700 flex justify-between items-center text-xs">
+                    <span class="text-gray-400 font-bold uppercase tracking-wider"><i class="fas fa-cut mr-1"></i> Active Limits</span>
+                    <div class="flex gap-4 font-mono">
+                        <span class="text-indigo-300">Lower (Start): <span id="limitStartDisplay" class="text-white font-bold">00:00</span></span>
+                        <span class="text-indigo-300">Upper (End): <span id="limitEndDisplay" class="text-white font-bold">End</span></span>
+                    </div>
+                </div>
+
+                <!-- 3. Source Handler (Dynamic) -->
+                <div id="sourceHandler" class="hidden bg-gray-900/50 p-3 rounded border border-gray-700 border-dashed">
+                    <div class="flex justify-between items-center mb-2">
+                        <span class="text-yellow-500 text-xs font-bold"><i class="fas fa-exclamation-triangle"></i> Source Missing</span>
+                        <span class="text-gray-500 text-xs">Choose how to play this movie:</span>
+                    </div>
+                    <div class="flex gap-2">
+                        <button onclick="triggerLocalUpload()" class="flex-1 bg-gray-700 hover:bg-gray-600 text-white py-1.5 rounded text-xs border border-gray-600 transition-colors">
+                            <i class="fas fa-folder-open mr-1"></i> Upload Local File
+                        </button>
+                        <div class="flex-[2] flex gap-1">
+                            <input type="text" id="manualLinkInput" placeholder='Paste URL or <iframe src="...">' class="flex-1 bg-black text-white px-2 rounded text-xs border border-gray-600">
+                            <button onclick="manualLinkSubmit()" class="bg-indigo-600 hover:bg-indigo-500 text-white px-3 rounded text-xs font-bold">Set Link</button>
+                        </div>
+                    </div>
+                    <input type="file" id="videoFileInput" accept="video/*" class="hidden">
+                </div>
+            </div>
+
+            <!-- Player Container (Constrained Max Height) -->
+            <div class="relative bg-black rounded-lg overflow-hidden shadow-2xl flex-1 min-h-[400px] max-h-[60vh] flex items-center justify-center border border-gray-800 group" id="player-wrapper">
+                
+                <!-- Video Elements set to fill container but maintaining aspect ratio (object-contain) -->
+                <video id="localPlayer" class="w-full h-full object-contain" controls style="display:none;"></video>
+                
+                <!-- Vimeo Player -->
+                <div id="vimeoPlayer" style="display:none;"></div>
+                
+                <div id="playerPlaceholder" class="text-gray-600 text-sm flex flex-col items-center gap-2">
+                    <i class="fas fa-film text-4xl mb-2 opacity-50"></i>
+                    <span>Select a movie or "Quick Start" to begin</span>
+                </div>
+
+                <div id="flashOverlay" class="absolute inset-0 bg-white opacity-0 pointer-events-none transition-opacity duration-200 pointer-events-none z-50"></div>
+            </div>
+
+            <!-- Dashboard -->
+            <div class="grid grid-cols-3 gap-4">
+                <div class="bg-gray-800 p-4 rounded-lg text-center border border-gray-700">
+                    <div class="text-gray-400 text-xs uppercase tracking-wider">Current Segment</div>
+                    <div id="currentSegmentTimer" class="text-4xl font-mono font-bold mt-1 text-gray-500">00.0s</div>
+                    <div class="text-xs mt-2 text-gray-500" id="segmentStatusText">Waiting...</div>
+                </div>
+                
+                <div class="bg-gray-800 p-4 rounded-lg text-center border border-gray-700">
+                    <div class="text-gray-400 text-xs uppercase tracking-wider">Avg Length (Main)</div>
+                    <div id="avgDurationDisplay" class="text-4xl font-mono font-bold mt-1 text-indigo-400">0.0s</div>
+                    <div class="text-xs mt-2 text-gray-400">Target: ~40s</div>
+                </div>
+
+                <div class="bg-gray-800 p-4 rounded-lg flex flex-col gap-2 justify-center">
+                    <button id="markBtn" class="bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 px-4 rounded text-lg transition-all active:scale-95 shadow-lg flex items-center justify-center gap-2">
+                        <i class="fas fa-cut"></i> SPLIT (Space)
+                    </button>
+                    <button id="resetBtn" class="bg-red-900/30 hover:bg-red-900/50 text-red-300 text-xs py-2 px-2 rounded border border-red-900/50 transition-colors">
+                        Reset Data
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Right Column: Data Log -->
+        <div class="w-96 bg-gray-900 border-l border-gray-800 flex flex-col shrink-0">
+            <div class="p-4 border-b border-gray-800 bg-gray-850 flex justify-between items-center">
+                <h2 class="font-semibold text-gray-200"><i class="fas fa-list-ul mr-2"></i>Segments</h2>
+                <div class="text-xs text-gray-400">
+                    Total: <span id="segmentCount" class="text-white font-bold">0</span>
+                </div>
+            </div>
+            
+            <div class="flex-1 overflow-y-auto p-0" id="segmentListContainer">
+                <table class="w-full text-sm text-left">
+                    <thead class="text-xs text-gray-400 uppercase bg-gray-900 sticky top-0 z-10 shadow-sm">
+                        <tr>
+                            <th class="px-2 py-3 w-8">#</th>
+                            <th class="px-2 py-3">Start</th>
+                            <th class="px-2 py-3">End</th>
+                            <th class="px-2 py-3">Dur</th>
+                            <th class="px-1"></th>
+                        </tr>
+                    </thead>
+                    <tbody id="segmentTableBody" class="text-gray-300">
+                        <tr class="text-gray-600 italic text-center"><td colspan="5" class="py-10 px-4">Ready.</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="p-4 border-t border-gray-800 bg-gray-900">
+                <button id="exportBtn" class="w-full bg-emerald-700 hover:bg-emerald-600 text-white font-bold py-3 px-4 rounded shadow-lg transition-colors flex items-center justify-center gap-2">
+                    <i class="fas fa-file-export"></i> Export JSON
+                </button>
+            </div>
+        </div>
+
+    </main>
+
+    <!-- Template Guide Modal -->
+    <div id="templateModal" class="fixed inset-0 bg-black/80 z-50 hidden flex items-center justify-center backdrop-blur-sm" onclick="toggleTemplateModal()">
+        <div class="bg-gray-900 border border-gray-700 rounded-xl shadow-2xl max-w-2xl w-full overflow-hidden" onclick="event.stopPropagation()">
+            <div class="bg-indigo-900/30 p-4 border-b border-gray-700 flex justify-between items-center">
+                <h3 class="text-lg font-bold text-white"><i class="fas fa-table mr-2 text-indigo-400"></i>Config Template Guide</h3>
+                <button onclick="toggleTemplateModal()" class="text-gray-400 hover:text-white"><i class="fas fa-times"></i></button>
+            </div>
+            
+            <div class="p-6 text-sm text-gray-300">
+                <p class="mb-4 text-xs text-gray-400">Create an Excel (.xlsx) or CSV file with the following columns to auto-load your movies:</p>
+                
+                <div class="overflow-x-auto mb-6 border border-gray-700 rounded-lg">
+                    <table class="w-full guide-table bg-gray-800">
+                        <thead>
+                            <tr>
+                                <th>Column Name</th>
+                                <th>Description</th>
+                                <th>Example</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td class="font-bold text-white">name</td>
+                                <td>Movie identifier</td>
+                                <td>Big Buck Bunny</td>
+                            </tr>
+                            <tr>
+                                <td class="font-bold text-white">lower_lim(video)</td>
+                                <td>Start time (Crop Start)</td>
+                                <td>0:00:30</td>
+                            </tr>
+                            <tr>
+                                <td class="font-bold text-white">upper_lim(video)</td>
+                                <td>End time (Crop End)</td>
+                                <td>0:10:00</td>
+                            </tr>
+                            <tr>
+                                <td class="font-bold text-white">link</td>
+                                <td>Direct video URL (.mp4)</td>
+                                <td>http://.../movie.mp4</td>
+                            </tr>
+                            <tr>
+                                <td class="font-bold text-white">embed</td>
+                                <td>Vimeo iframe code or URL</td>
+                                <td>&lt;iframe src="..."&gt;</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="flex gap-4 justify-center items-center border-t border-gray-800 pt-6">
+                    <button onclick="downloadTemplate('json')" class="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded text-xs font-bold flex items-center gap-2">
+                        <i class="fas fa-file-code"></i> Download JSON Template
+                    </button>
+                    <button onclick="downloadTemplate('csv')" class="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded text-xs font-bold flex items-center gap-2">
+                        <i class="fas fa-file-csv"></i> Download CSV Template
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Criteria Modal -->
+    <div id="criteriaModal" class="fixed inset-0 bg-black/80 z-50 hidden flex items-center justify-center backdrop-blur-sm" onclick="toggleCriteria()">
+        <div class="bg-gray-900 border border-gray-700 rounded-xl shadow-2xl max-w-lg w-full overflow-hidden" onclick="event.stopPropagation()">
+            <div class="bg-indigo-900/30 p-4 border-b border-gray-700 flex justify-between items-center">
+                <h3 class="text-lg font-bold text-white"><i class="fas fa-ruler-combined mr-2 text-indigo-400"></i>Segmentation Criteria</h3>
+                <button onclick="toggleCriteria()" class="text-gray-400 hover:text-white"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="p-6 space-y-6 text-sm text-gray-300">
+                
+                <!-- Section A -->
+                <div>
+                    <h4 class="text-indigo-400 font-bold uppercase text-xs tracking-wider mb-3 border-b border-gray-800 pb-1">A. Primary Boundary Cues</h4>
+                    <p class="mb-3 italic text-gray-500 text-xs">Mark a segment when you see a major narrative shift:</p>
+                    <ul class="space-y-3">
+                        <li class="flex gap-3"><span class="text-xl w-6 text-center">📍</span> <div><strong class="text-gray-200">Location Shift:</strong> New scene/place.</div></li>
+                        <li class="flex gap-3"><span class="text-xl w-6 text-center">⏰</span> <div><strong class="text-gray-200">Time Jump:</strong> Explicit flashback/forward.</div></li>
+                        <li class="flex gap-3"><span class="text-xl w-6 text-center">🎯</span> <div><strong class="text-gray-200">Topic/Goal:</strong> Change in sub-plot or objective.</div></li>
+                        <li class="flex gap-3"><span class="text-xl w-6 text-center">👥</span> <div><strong class="text-gray-200">Characters:</strong> Major entry/exit altering interaction.</div></li>
+                        <li class="flex gap-3"><span class="text-xl w-6 text-center">🎬</span> <div><strong class="text-gray-200">Action State:</strong> Switch (e.g., Dialogue <i class="fas fa-arrow-right text-[10px] mx-1"></i> Chase).</div></li>
+                    </ul>
+                </div>
+
+                <!-- Section B -->
+                <div>
+                    <h4 class="text-emerald-400 font-bold uppercase text-xs tracking-wider mb-3 border-b border-gray-800 pb-1">B. Length Regularization (30s - 50s)</h4>
+                    <div class="space-y-3">
+                        <div class="bg-gray-800/50 p-3 rounded-r border-l-4 border-yellow-500">
+                            <strong class="text-yellow-500 text-xs block mb-1">TOO SHORT (< 30s)</strong>
+                            <span>Merge with neighbor (prioritize narrative continuity) unless it's a <em>Hard Boundary</em> (Time/Location jump).</span>
+                        </div>
+                        <div class="bg-gray-800/50 p-3 rounded-r border-l-4 border-red-500">
+                            <strong class="text-red-500 text-xs block mb-1">TOO LONG (> 50s)</strong>
+                            <span>Split at minor cues (e.g., pause in dialogue). Allow up to ~60s only if indivisible.</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="pt-4 border-t border-gray-800 text-center">
+                    <button onclick="toggleCriteria()" class="bg-indigo-600 hover:bg-indigo-500 text-white px-8 py-2 rounded font-semibold transition-colors shadow-lg">
+                        Got it
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- Global State ---
+        const state = {
+            config: [],
+            currentIdx: -1,
+            segments: [],
+            lastCutTime: 0,
+            activeLimit: { start: 0, end: Infinity },
+            videoDuration: 0,
+            playerType: null,
+            vimeoPlayer: null,
+            isPlaying: false,
+            hasAddedStartCrop: false,
+            hasAddedEndCrop: false
+        };
+
+        const els = {
+            configInput: document.getElementById('configInput'),
+            movieSelect: document.getElementById('movieSelect'),
+            currentMovieName: document.getElementById('currentMovieName'),
+            sourceHandler: document.getElementById('sourceHandler'),
+            manualLinkInput: document.getElementById('manualLinkInput'),
+            videoFileInput: document.getElementById('videoFileInput'),
+            playerPlaceholder: document.getElementById('playerPlaceholder'),
+            localPlayer: document.getElementById('localPlayer'),
+            vimeoContainer: document.getElementById('vimeoPlayer'),
+            timerDisplay: document.getElementById('currentSegmentTimer'),
+            timerStatus: document.getElementById('segmentStatusText'),
+            avgDisplay: document.getElementById('avgDurationDisplay'),
+            tableBody: document.getElementById('segmentTableBody'),
+            segmentCount: document.getElementById('segmentCount'),
+            flashOverlay: document.getElementById('flashOverlay'),
+            markBtn: document.getElementById('markBtn'),
+            resetBtn: document.getElementById('resetBtn'),
+            exportBtn: document.getElementById('exportBtn'),
+            limitsBar: document.getElementById('limitsBar'),
+            limitStartDisplay: document.getElementById('limitStartDisplay'),
+            limitEndDisplay: document.getElementById('limitEndDisplay')
+        };
+
+        // --- 1. Config & Dropdown Logic ---
+        els.configInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                try {
+                    let json = [];
+                    if (file.name.toLowerCase().endsWith('.json')) {
+                        json = JSON.parse(event.target.result);
+                    } else {
+                        const data = new Uint8Array(event.target.result);
+                        const workbook = XLSX.read(data, {type: 'array'});
+                        // FIXED: Added raw: false ensures cells like '0:00:30' are read as strings, not serials
+                        json = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { raw: false });
+                    }
+
+                    // Normalize keys and map aliases including "(video)" suffix
+                    json = json.map(r => {
+                        const nr = {};
+                        Object.keys(r).forEach(k => {
+                            let key = k.toLowerCase().trim();
+                            // Remove "(video)" if present
+                            key = key.replace(/\(video\)/g, "");
+                            key = key.trim();
+
+                            // Aliasing logic
+                            if (key === 'lowerlim' || key === 'lower_lim') nr['lower_lim'] = r[k];
+                            else if (key === 'upperlim' || key === 'upper_lim') nr['upper_lim'] = r[k];
+                            else if (key === 'link') nr['url'] = r[k];
+                            else if (key === 'embed') nr['embed_link'] = r[k];
+                            else nr[key] = r[k];
+                        });
+                        return nr;
+                    });
+
+                    state.config = Array.isArray(json) ? json : [json];
+                    document.getElementById('configStatus').innerText = `Loaded ${state.config.length} items.`;
+                    renderDropdown();
+                } catch(e) { alert("Config Error: " + e.message); }
+            };
+            file.name.toLowerCase().endsWith('.json') ? reader.readAsText(file) : reader.readAsArrayBuffer(file);
+        });
+
+        function renderDropdown() {
+            els.movieSelect.innerHTML = `
+                <option value="" disabled selected>-- Select from List --</option>
+                <option value="manual" class="manual-option">➕ Quick Start / Add New</option>
+            `;
+            
+            state.config.forEach((m, i) => {
+                const opt = document.createElement('option');
+                opt.value = i;
+                const hasSource = m.embed_link || m.url || m.localUrl;
+                opt.textContent = `${m.name || 'Untitled'} ${hasSource ? '' : '[Missing Source]'}`;
+                if (!hasSource) opt.classList.add('missing-source');
+                els.movieSelect.appendChild(opt);
+            });
+            
+            if(state.currentIdx >= 0 && state.currentIdx < state.config.length) {
+                els.movieSelect.value = state.currentIdx;
+            }
+        }
+
+        els.movieSelect.addEventListener('change', (e) => {
+            const val = e.target.value;
+            if (val === 'manual') {
+                createNewEntry();
+            } else if (val !== "") {
+                loadMovieConfig(parseInt(val));
+            }
+        });
+
+        function createNewEntry() {
+            const newEntry = { name: "New Movie", lower_lim: 0, upper_lim: null };
+            state.config.push(newEntry);
+            state.currentIdx = state.config.length - 1;
+            renderDropdown();
+            els.movieSelect.value = state.currentIdx;
+            loadMovieConfig(state.currentIdx);
+            els.currentMovieName.focus();
+            els.currentMovieName.select();
+        }
+
+        els.currentMovieName.addEventListener('input', (e) => {
+            if (state.currentIdx >= 0) {
+                state.config[state.currentIdx].name = e.target.value;
+            }
+        });
+
+        // --- 2. Movie Loading ---
+        function loadMovieConfig(idx) {
+            state.currentIdx = idx;
+            const data = state.config[idx];
+            
+            els.currentMovieName.value = data.name || "Untitled";
+            
+            state.activeLimit.start = parseTime(data.lower_lim || 0);
+            state.activeLimit.end = data.upper_lim ? parseTime(data.upper_lim) : Infinity;
+
+            // Update Limit Display
+            if (state.activeLimit.start > 0 || state.activeLimit.end !== Infinity) {
+                els.limitsBar.classList.remove('hidden');
+                els.limitStartDisplay.textContent = formatTime(state.activeLimit.start);
+                els.limitEndDisplay.textContent = state.activeLimit.end === Infinity ? "End" : formatTime(state.activeLimit.end);
+            } else {
+                els.limitsBar.classList.add('hidden');
+            }
+
+            // CLEAN SEGMENTS ON LOAD
+            state.segments = [];
+            state.hasAddedStartCrop = false;
+            state.hasAddedEndCrop = false;
+            state.videoDuration = 0;
+            renderTable();
+
+            const source = data.embed_link || data.url || data.localUrl;
+            
+            if (source) {
+                els.sourceHandler.classList.add('hidden');
+                initPlayer(source);
+            } else {
+                hidePlayers();
+                els.playerPlaceholder.style.display = 'block';
+                els.playerPlaceholder.textContent = "Source Missing. Please upload file or paste link above.";
+                els.sourceHandler.classList.remove('hidden');
+            }
+        }
+
+        // --- 3. Source Injection ---
+        window.triggerLocalUpload = () => els.videoFileInput.click();
+        
+        els.videoFileInput.addEventListener('change', (e) => {
+            if(!e.target.files[0]) return;
+            const file = e.target.files[0];
+            const url = URL.createObjectURL(file);
+            
+            if (!state.config[state.currentIdx].name || state.config[state.currentIdx].name === "New Movie") {
+                const cleanName = file.name.replace(/\.[^/.]+$/, "");
+                state.config[state.currentIdx].name = cleanName;
+                els.currentMovieName.value = cleanName;
+            }
+            
+            state.config[state.currentIdx].localUrl = url;
+            renderDropdown();
+            loadMovieConfig(state.currentIdx);
+        });
+
+        window.manualLinkSubmit = () => {
+            const val = els.manualLinkInput.value.trim();
+            if(!val) return;
+            state.config[state.currentIdx].embed_link = val;
+            renderDropdown();
+            loadMovieConfig(state.currentIdx);
+            els.manualLinkInput.value = '';
+        };
+
+        // --- 4. Player ---
+        function hidePlayers() {
+            els.localPlayer.style.display = 'none';
+            els.vimeoContainer.style.display = 'none';
+            els.localPlayer.pause();
+            
+            if(state.vimeoPlayer) {
+                try { state.vimeoPlayer.destroy(); } catch(e) {}
+                state.vimeoPlayer = null;
+            }
+            els.vimeoContainer.innerHTML = '';
+            
+            state.playerType = null;
+        }
+
+        function initPlayer(source) {
+            hidePlayers();
+            els.playerPlaceholder.style.display = 'none';
+
+            const isVimeo = source.includes('vimeo') || source.includes('<iframe');
+            
+            if (isVimeo) {
+                state.playerType = 'vimeo';
+                els.vimeoContainer.style.display = 'block';
+                let url = source;
+                if(source.includes('<iframe')) {
+                    const match = source.match(/src="([^"]+)"/);
+                    if(match) url = match[1];
+                }
+
+                // FIXED: Removed responsive: true to prevent cropping in overflow-hidden containers. 
+                // We now force 100% width/height via CSS for proper letterboxing (contain).
+                state.vimeoPlayer = new Vimeo.Player('vimeoPlayer', { url: url, autoplay: false });
+                state.vimeoPlayer.ready().then(() => {
+                    state.vimeoPlayer.getDuration().then(d => { state.videoDuration = d; handleReadyState(); });
+                });
+                state.vimeoPlayer.on('play', () => state.isPlaying = true);
+                state.vimeoPlayer.on('pause', () => state.isPlaying = false);
+
+            } else {
+                state.playerType = 'local';
+                els.localPlayer.style.display = 'block';
+                els.localPlayer.src = source;
+                els.localPlayer.onloadedmetadata = () => {
+                    state.videoDuration = els.localPlayer.duration;
+                    handleReadyState();
+                };
+            }
+        }
+
+        // --- 5. Auto Seek & Start ---
+        async function handleReadyState() {
+            const startT = state.activeLimit.start;
+            
+            // Auto add start crop immediately when player is ready
+            if (startT > 0 && !state.hasAddedStartCrop) {
+                state.segments.push({ startTime: 0, endTime: startT, duration: startT, type: 'crop_start' });
+                state.hasAddedStartCrop = true;
+                renderTable();
+            }
+            
+            state.lastCutTime = startT;
+            if (state.playerType === 'local') els.localPlayer.currentTime = startT;
+            else if(state.vimeoPlayer) await state.vimeoPlayer.setCurrentTime(startT);
+        }
+
+        // --- 6. Time Loop ---
+        async function getCurrentTime() {
+            if (state.playerType === 'local') return els.localPlayer.currentTime;
+            if (state.playerType === 'vimeo' && state.vimeoPlayer) return await state.vimeoPlayer.getCurrentTime();
+            return 0;
+        }
+
+        setInterval(async () => {
+            if(!state.playerType) return;
+            if(state.playerType === 'local') state.isPlaying = !els.localPlayer.paused;
+
+            const t = await getCurrentTime();
+            
+            // Auto End Logic
+            if (state.activeLimit.end !== Infinity && t >= state.activeLimit.end && state.isPlaying) {
+                // Pause
+                if(state.playerType==='local') els.localPlayer.pause();
+                else state.vimeoPlayer.pause();
+                
+                // Add End Crop Record automatically if not added yet
+                if(!state.hasAddedEndCrop && state.videoDuration > state.activeLimit.end) {
+                    state.segments.push({
+                        startTime: state.activeLimit.end,
+                        endTime: state.videoDuration,
+                        duration: state.videoDuration - state.activeLimit.end,
+                        type: 'crop_end'
+                    });
+                    state.hasAddedEndCrop = true;
+                    renderTable();
+                }
+                return;
+            }
+
+            if (!state.isPlaying) return;
+            const dur = t - state.lastCutTime;
+            els.timerDisplay.innerText = dur.toFixed(1) + 's';
+            
+            if(dur < 30) {
+                els.timerDisplay.className = "text-4xl font-mono font-bold mt-1 text-yellow-500";
+                els.timerStatus.innerText = "Too Short (<30s)";
+            } else if (dur > 50) {
+                els.timerDisplay.className = "text-4xl font-mono font-bold mt-1 text-red-500";
+                els.timerStatus.innerText = "Too Long (>50s)";
+            } else {
+                els.timerDisplay.className = "text-4xl font-mono font-bold mt-1 text-emerald-400";
+                els.timerStatus.innerText = "Optimal Range";
+            }
+        }, 100);
+
+        async function markSegment() {
+            const t = await getCurrentTime();
+            if(t - state.lastCutTime < 0.5) return;
+            const dur = t - state.lastCutTime;
+            state.segments.push({ startTime: state.lastCutTime, endTime: t, duration: dur, type: 'event' });
+            state.lastCutTime = t;
+            renderTable();
+            els.flashOverlay.style.opacity = '0.3'; 
+            setTimeout(()=>els.flashOverlay.style.opacity='0',100);
+        }
+
+        function resetData(clearSegments = true) {
+            if(clearSegments) {
+                state.segments = [];
+                state.hasAddedStartCrop = false;
+                state.hasAddedEndCrop = false;
+            }
+            
+            // Re-apply Start Crop if needed (only if we just cleared segments and have limit)
+            const startT = state.activeLimit.start;
+            if (clearSegments && startT > 0) {
+                state.segments.push({ startTime: 0, endTime: startT, duration: startT, type: 'crop_start' });
+                state.hasAddedStartCrop = true;
+            }
+
+            state.lastCutTime = startT;
+            
+            // Reset player position
+            if (state.playerType === 'local') {
+                els.localPlayer.currentTime = startT;
+                els.localPlayer.pause();
+            } else if (state.playerType === 'vimeo' && state.vimeoPlayer) {
+                state.vimeoPlayer.setCurrentTime(startT);
+                state.vimeoPlayer.pause();
+            }
+            
+            renderTable();
+        }
+
+        function renderTable() {
+            // Sort state.segments first to ensure chronological order
+            state.segments.sort((a,b) => a.startTime - b.startTime);
+
+            els.tableBody.innerHTML = '';
+            
+            // Calculate stats (only events, ignore crops)
+            const events = state.segments.filter(s => s.type === 'event');
+            let totalDur = 0;
+            events.forEach(s => totalDur += s.duration);
+            const avg = events.length ? (totalDur / events.length) : 0;
+            
+            els.segmentCount.innerText = events.length; // Count only events
+            els.avgDisplay.innerText = avg.toFixed(1) + 's';
+            
+            // Color avg
+            if(avg < 30) els.avgDisplay.className = "text-4xl font-mono font-bold mt-1 text-yellow-500";
+            else if(avg > 50) els.avgDisplay.className = "text-4xl font-mono font-bold mt-1 text-red-500";
+            else els.avgDisplay.className = "text-4xl font-mono font-bold mt-1 text-emerald-400";
+
+            // Render Rows (Reverse Order for Display)
+            [...state.segments].reverse().forEach((s, i) => {
+                const tr = document.createElement('tr');
+                tr.className = 'segment-row border-b border-gray-800 transition-colors';
+                
+                let typeBadge = '';
+                let colorClass = 'text-gray-300';
+                
+                if (s.type === 'crop_start' || s.type === 'crop_end') {
+                    typeBadge = `<span class="bg-gray-700 text-gray-300 px-1 rounded text-[10px] mr-1 uppercase">${s.type.replace('_',' ')}</span>`;
+                    colorClass = 'text-gray-500 italic';
+                } else {
+                    if(s.duration<30) colorClass='text-yellow-500 font-bold';
+                    else if(s.duration>50) colorClass='text-red-400 font-bold';
+                    else colorClass='text-emerald-400 font-bold';
+                }
+
+                // IMPORTANT: Pass the *original index* (from sorted state.segments) to removeSegment
+                // Since we are iterating reversed copy, we need to find s in state.segments
+                const originalIndex = state.segments.indexOf(s);
+
+                // For display ID: use the index in the "Event" list if it's an event
+                let displayId = "";
+                if(s.type === 'event') {
+                    // Find index among events only
+                    const eventIdx = events.indexOf(s) + 1;
+                    displayId = eventIdx;
+                }
+
+                tr.innerHTML = `<td class="px-2 py-3 text-gray-500 font-mono text-xs text-center">${displayId}</td>
+                                <td class="px-2 font-mono text-xs">${formatTime(s.startTime)}</td>
+                                <td class="px-2 font-mono text-xs">${formatTime(s.endTime)}</td>
+                                <td class="px-2 font-mono ${colorClass}">${formatTime(s.duration)}s</td>
+                                <td class="text-right px-1">
+                                    ${typeBadge}
+                                    ${s.type==='event' ? `<button onclick="removeSegment(${originalIndex})" class="text-red-500 hover:text-red-300 px-2" title="Delete & Jump Back"><i class="fas fa-undo"></i></button>` : ''}
+                                </td>`;
+                els.tableBody.appendChild(tr);
+            });
+        }
+
+        // Updated Remove Segment Logic
+        window.removeSegment = (idx) => { 
+            if(confirm('Delete this segment and jump back to its start?')) { 
+                const seg = state.segments[idx];
+                const jumpTo = seg.startTime;
+                
+                // Remove from array
+                state.segments.splice(idx, 1); 
+                
+                // Reset state
+                state.lastCutTime = jumpTo;
+                state.isPlaying = false; // Pause immediately
+                
+                // Seek Player
+                if(state.playerType === 'local') {
+                    els.localPlayer.currentTime = jumpTo;
+                    els.localPlayer.pause();
+                } else if(state.vimeoPlayer) {
+                    state.vimeoPlayer.setCurrentTime(jumpTo).then(() => {
+                        state.vimeoPlayer.pause();
+                    });
+                }
+                
+                renderTable(); 
+            } 
+        };
+
+        window.toggleTemplateModal = () => document.getElementById('templateModal').classList.toggle('hidden');
+        window.toggleCriteria = () => document.getElementById('criteriaModal').classList.toggle('hidden');
+        
+        window.downloadTemplate = (t) => {
+            if(t==='json') {
+                const d = [{name:"Example", lower_lim:"0:00:30", upper_lim:"0:05:00", link:"", embed:""}];
+                const a = document.createElement('a'); a.href='data:text/json;charset=utf-8,'+encodeURIComponent(JSON.stringify(d,null,2)); a.download='template.json'; document.body.appendChild(a); a.click(); a.remove();
+            } else {
+                const d = "name,lower_lim,upper_lim,link,embed\nExample,0:00:30,0:05:00,,";
+                const a = document.createElement('a'); a.href='data:text/csv;charset=utf-8,'+encodeURIComponent(d); a.download='template.csv'; document.body.appendChild(a); a.click(); a.remove();
+            }
+        };
+
+        function parseTime(t) {
+            if (!t) return 0;
+            if (typeof t === 'number') return t;
+            // Check if string is already formatted (contains ':')
+            if (t.toString().indexOf(':') === -1) {
+                 // If raw float from Excel (e.g. 0.00037), convert to seconds (1 day = 86400s)
+                 // Or if it's just seconds as string
+                 const num = parseFloat(t);
+                 if (num < 1) return num * 24 * 3600; 
+            }
+            
+            const p = t.toString().trim().split(':').map(Number);
+            if (p.length === 3) return p[0]*3600 + p[1]*60 + p[2];
+            if (p.length === 2) return p[0]*60 + p[1];
+            return p[0];
+        }
+        function formatTime(s) { 
+            const val = parseFloat(s);
+            return isNaN(val) ? "0.00" : val.toFixed(2); 
+        }
+
+        // === Event Listeners (Bound at the end) ===
+        
+        // 1. Button Logic (Explicit Binding)
+        els.markBtn.addEventListener('click', (e) => {
+            // Important: Blur the button immediately so subsequent Space key presses don't trigger the button 'click' again
+            els.markBtn.blur();
+            markSegment();
+        });
+
+        els.resetBtn.addEventListener('click', () => resetData(true));
+        els.exportBtn.addEventListener('click', () => {
+             // ... export logic ...
+             // FIXED: Ensure filename uses the current input value properly
+             const movieName = els.currentMovieName.value || "Untitled";
+             const data = {
+                movie: movieName,
+                avg: parseFloat(els.avgDisplay.innerText),
+                segments: state.segments.map((s,i)=>({id:i+1, start:parseFloat(s.startTime.toFixed(3)), end:parseFloat(s.endTime.toFixed(3)), duration:parseFloat(s.duration.toFixed(3))}))
+             };
+             const a = document.createElement('a');
+             a.href = 'data:text/json;charset=utf-8,'+encodeURIComponent(JSON.stringify(data,null,2));
+             a.download = movieName+'_segments.json';
+             document.body.appendChild(a); a.click(); a.remove();
+        });
+
+        // 2. Keyboard Logic
+        document.addEventListener('keydown', (e) => {
+             // Ignore input fields
+             if(e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+
+             if(e.code === 'Space') {
+                 e.preventDefault();
+                 
+                 if(state.playerType === 'local') {
+                     if(els.localPlayer.paused) els.localPlayer.play();
+                     else markSegment();
+                 } 
+                 else if (state.playerType === 'vimeo' && state.vimeoPlayer) {
+                     state.vimeoPlayer.getPaused().then(paused => {
+                         if(paused) state.vimeoPlayer.play();
+                         else markSegment();
+                     });
+                 }
+             }
+        });
+
+    </script>
+</body>
+</html>
